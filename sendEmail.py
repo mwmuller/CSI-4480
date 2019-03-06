@@ -1,8 +1,8 @@
 import smtplib, ssl
 
 
-sender_email = "mike4harbor1@hotmail.com"
-rec_email = "ougoldvibrations@gmail.com"
+sender_email = "someemail@gmail.com
+rec_email = "email@gmail.com"
 message = """\
 	Subject: HI There
 
@@ -12,7 +12,7 @@ message = """\
 
 port = 465
 
-password = "samsungs4"
+password = "password"
 
 context = ssl.create_default_context()
 
