@@ -12,24 +12,35 @@ username = 'root'
 password = 'root'
 dbname = 'deauth'
 dbtable = 'Info'
-
+count = 0
 # Address used for SMTP MAIL FROM command  
-fromAddress = 'corn@bt.com'
+fromAddress = 'corn1@bt.com'
 def doQuery( conn ):
+	global count
 	cur = conn.cursor(buffered=True)
 	conn.commit()
 	cur.execute("Select ID, email, domain from Info where verified = 0;")
-	print("done a cur")
  #This query might not be needed. The impact would be minimal
 	if cur.rowcount > 0 : #Check if any rows were returned
 		for ID, email, domain in cur.fetchall() :
 				verify(email, domain, ID, conn)
-
+		count = 0
+	else:
+		count = count + 1
 #this method will pull from the database every half second
 def dbThread( conn ):
+	global count
+	qTime = .25
+	multiplier = 0
 	while 1:
-		time.sleep(.25)
-		doQuery( conn  )
+		time.sleep(qTime)
+		doQuery( conn )
+		print("did a Query: %s" %(count,))
+		multiplier = count / (10*(int(multiplier) + 1)
+		if qTime <= 3 and multiplier >= 1:
+			qTime = (1*int(multiplier) - 1) + .25
+
+ 
 
 
 def verify(email, domain, ID, conn):
