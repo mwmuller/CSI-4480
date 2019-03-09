@@ -1,4 +1,3 @@
-import re
 import smtplib
 import threading
 import time
@@ -36,7 +35,7 @@ def dbThread( conn ):
 		time.sleep(qTime)
 		doQuery( conn )
 		print("did a Query: %s" %(count,))
-		multiplier = count / (10*(int(multiplier) + 1)
+		multiplier = count / (10*(int(multiplier) + 1))
 		if qTime <= 3 and multiplier >= 1:
 			qTime = (1*int(multiplier) - 1) + .25
 
